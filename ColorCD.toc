@@ -1,0 +1,17 @@
+## Interface: 120000
+## Title: |cffbb77ffColorCD|r
+## Version: 2.1
+## Author: Soundz
+## Notes: Custom-colored action bar cooldown numbers with urgency transitions and minimap button.
+## SavedVariables: ColorCD_DB
+## OptionalDeps: LibSharedMedia-3.0
+## IconTexture: Interface\AddOns\ColorCD\Media\cd_icon.png
+## X-Category: Action Bars
+## X-Website:
+## X-Curse-Project-ID:
+## X-WoWI-ID:
+## X-Wago-ID:
+
+ColorCD.lua
+MinimapButton.lua
+Options.lua

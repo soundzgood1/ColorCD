@@ -1,0 +1,49 @@
+## v2.1 - Urgency Color Combat Fix
+- Found the real root cause of urgency colors being unreliable: WoW's newest
+  anti-cheat system (Patch 12.0, "Midnight") blocks addons from reading
+  precise cooldown timing while you're in combat — not just around the
+  Global Cooldown as first thought, but for the entire fight, through every
+  API that exposes it. No workaround can safely guess around this without
+  risking a wrong color, so Warning/Critical now only apply outside of
+  combat; your Normal color shows for the whole fight instead. This
+  replaces the incomplete fix from v2.0 and removes the errors some users
+  saw flooding their chat/bug-report window during combat.
+- Fixed a crash in the Font picker if another addon's font pack (e.g. a
+  LibSharedMedia font set) registered a font pointing at a missing file —
+  broken fonts are now filtered out instead of breaking the options window.
+- Reorganized the options window: Number Size and Font now sit with the
+  Normal color row (general number appearance), and Warning/Critical have
+  their own clearly-labeled "Urgency Colors" section explaining the combat
+  limitation above.
+
+## v2.0 - Reliability, UX Overhaul & Font Support
+- Fixed a major bug where urgency colors (medium/critical) would permanently
+  stop working part-way through a play session, requiring a UI reload to fix.
+  Caused by Blizzard's anti-automation protection on the Global Cooldown's
+  start time; cooldown tracking no longer reads that value at all.
+- Fixed some action bar buttons (notably on Bartender4/ElvUI/vehicle bars)
+  never getting colored at all if their countdown text wasn't ready on the
+  first scan pass.
+- Redesigned the options window: Normal/Warning/Critical colors now sit in
+  one aligned, explained section instead of two disconnected ones.
+- Added a live preview icon with a "Test Cooldown" button, so you can check
+  color/size/font changes without needing a real ability on cooldown.
+- Warning/Critical thresholds now apply instantly as you type, and Critical
+  can no longer be set higher than Warning (that combination made Warning
+  unreachable).
+- Added a Font picker for the cooldown number (built-in client fonts, plus
+  any font registered via LibSharedMedia), with compatibility handling for
+  Fontmancer and similar global font-replacer addons.
+- Cooldown color updates now apply within 10ms instead of up to 100ms.
+
+## v1.5 - Initial Public Release
+- Custom color for cooldown countdown numbers (default: yellow)
+- Urgency color system: numbers shift to orange below 5s, red below 2s remaining
+- All urgency colors are fully customizable via the options panel
+- Minimap button (draggable, hideable)
+- Options UI accessible via minimap button, /colorcd, or /ccd
+- Also accessible via Escape → Options → AddOns → ColorCD
+- Combat-safe: colors and urgency transitions work correctly during combat
+- GCD suppression: global cooldown does not trigger urgency colors
+- Late injection for vehicle / override action bars
+- Enable/disable toggle restores native white numbers when off
