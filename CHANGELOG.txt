@@ -1,3 +1,16 @@
+## v2.2 - Performance Fix (Mass Freeze Lags)
+- Fixed a serious performance issue where having 100+ cooldowns active at once
+  (common with Bartender4/ElvUI/Dominos bar setups) could cause noticeable
+  freezes: every cooldown ran its own independent update timer, so a busy bar
+  setup meant dozens or hundreds of timers all competing for CPU time every
+  single frame. All cooldowns now share one timer instead.
+- Fixed the addon doing an expensive full UI scan every time your action bars
+  swapped (e.g. Druid form-shifting, mounting a vehicle) — this could stack up
+  and contribute to the freezes above. That full scan now only runs at login/
+  zoning; bar swaps use a much cheaper targeted check.
+- Fixed the minimap button's drag-to-reposition running completely unthrottled
+  while being dragged.
+
 ## v2.1 - Urgency Color Combat Fix
 - Found the real root cause of urgency colors being unreliable: WoW's newest
   anti-cheat system (Patch 12.0, "Midnight") blocks addons from reading
