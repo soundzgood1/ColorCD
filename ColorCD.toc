@@ -8,7 +8,7 @@
 ## IconTexture: Interface\AddOns\ColorCD\Media\cd_icon.png
 ## X-Category: Action Bars
 ## X-Website:
-## X-Curse-Project-ID:
+## X-Curse-Project-ID: 1593453
 ## X-WoWI-ID:
 ## X-Wago-ID:
 
