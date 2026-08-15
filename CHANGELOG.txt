@@ -1,3 +1,6 @@
+## v2.2.1 - Interface Update
+- Updated the client interface version for patch 12.1 — no code changes.
+
 ## v2.2 - Performance Fix (Mass Freeze Lags)
 - Fixed a serious performance issue where having 100+ cooldowns active at once
   (common with Bartender4/ElvUI/Dominos bar setups) could cause noticeable

@@ -1,6 +1,6 @@
-## Interface: 120000
+## Interface: 120007, 120100
 ## Title: |cffbb77ffColorCD|r
-## Version: 2.2
+## Version: 2.2.1
 ## Author: Soundz
 ## Notes: Custom-colored action bar cooldown numbers with urgency transitions and minimap button.
 ## SavedVariables: ColorCD_DB
