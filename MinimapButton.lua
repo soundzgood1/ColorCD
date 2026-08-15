@@ -28,7 +28,11 @@ end
 -- ── Drag to reposition around the minimap ────────────────────────────────────
 btn:SetScript("OnDragStart", function(self)
     self:LockHighlight()
-    self:SetScript("OnUpdate", function()
+    local elapsed = 0
+    self:SetScript("OnUpdate", function(_, dt)
+        elapsed = elapsed + dt
+        if elapsed < 0.02 then return end  -- ~50/s: still smooth, not every rendered frame
+        elapsed = 0
         local mx, my = Minimap:GetCenter()
         local scale  = UIParent:GetScale()
         local cx, cy = GetCursorPosition()

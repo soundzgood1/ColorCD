@@ -58,7 +58,7 @@ local function ParseRemainingSeconds(text)
 end
 
 -- ── Shared font application ──────────────────────────────────────────────────
--- Used by UpdateAllColors, InjectColor's initial apply, and the per-cooldown
+-- Used by UpdateAllColors, InjectColor's initial apply, and the shared
 -- ticker, so the face/size resolution logic lives in exactly one place.
 local function ApplyFont(nativeTxt, db, sz)
     if sz <= 0 then return end
@@ -127,40 +127,61 @@ local function InjectColor(cd)
         pcall(function() cd:SetHideCountdownNumbers(false) end)
     end
 
-    ColorCD.overlays[#ColorCD.overlays + 1] = nativeTxt
-
     local db = DB()
     if db.enabled then
         nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
     end
     ApplyFont(nativeTxt, db, db.fontSize or 0)
 
-    -- Ticker parented to UIParent (non-secure) so OnUpdate fires even in combat.
-    local ticker       = CreateFrame("Frame", nil, UIParent)
-    local elapsed      = 0
-    local lastSize     = db.fontSize or 0  -- tracks applied size/face to avoid redundant SetFont
-    local lastFontPath = db.fontPath
+    -- Per-overlay ticker state lives directly on the FontString, read/written
+    -- by the single shared ticker below — see the comment there for why this
+    -- replaced a CreateFrame+OnUpdate per cooldown.
+    nativeTxt._ccdLastSize     = db.fontSize or 0  -- tracks applied size/face to avoid redundant SetFont
+    nativeTxt._ccdLastFontPath = db.fontPath
     -- True once the current countdown text has been observed above the GCD's
     -- ~1.5s ceiling, meaning it must be a real cooldown. Reset whenever the
     -- text goes blank (finished/idle).
-    local trackingReal = false
+    nativeTxt._ccdTrackingReal = false
 
-    ticker:SetScript("OnUpdate", function(_, dt)
-        elapsed = elapsed + dt
-        if elapsed < 0.01 then return end  -- ~100/s: effectively instant, still cheap
-        elapsed = 0
+    ColorCD.overlays[#ColorCD.overlays + 1] = nativeTxt
+end
+ColorCD.InjectColor = InjectColor  -- exposed so Options.lua can drive the preview icon
 
-        local db = DB()
-        if not db.enabled then
+-- ── Single shared ticker for every injected cooldown ─────────────────────────
+-- Previously each cooldown got its own CreateFrame + OnUpdate. With 100+
+-- buttons active at once (Bartender4/ElvUI/Dominos bars combined), that meant
+-- 100+ separate OnUpdate closures dispatched every rendered frame, each
+-- re-checking InCombatLockdown() and calling DB() independently. One ticker
+-- walking the shared overlays list does the same per-cooldown work — text
+-- parsing, color math, font updates — for a single OnUpdate call instead,
+-- and reads InCombatLockdown()/DB() once per tick rather than once per
+-- overlay. Parented to UIParent (non-secure) so it still fires in combat.
+local ticker        = CreateFrame("Frame", nil, UIParent)
+local tickerElapsed = 0
+ticker:SetScript("OnUpdate", function(_, dt)
+    tickerElapsed = tickerElapsed + dt
+    if tickerElapsed < 0.01 then return end  -- ~100/s cap, shared across every overlay
+    tickerElapsed = 0
+
+    local db = DB()
+    if not db.enabled then
+        for _, nativeTxt in ipairs(ColorCD.overlays) do
             nativeTxt:SetTextColor(1, 1, 1, 1)
-            return
         end
+        return
+    end
 
-        local sz = db.fontSize or 0
-        if sz ~= lastSize or db.fontPath ~= lastFontPath then
+    local sz = db.fontSize or 0
+    -- See InjectColor's ticker comment for why this is read once here rather
+    -- than once per overlay: the secret-value/anti-automation behavior below
+    -- doesn't vary per cooldown, only per combat state.
+    local inCombat = InCombatLockdown()
+
+    for _, nativeTxt in ipairs(ColorCD.overlays) do
+        if sz ~= nativeTxt._ccdLastSize or db.fontPath ~= nativeTxt._ccdLastFontPath then
             ApplyFont(nativeTxt, db, sz)
-            lastSize     = sz
-            lastFontPath = db.fontPath
+            nativeTxt._ccdLastSize     = sz
+            nativeTxt._ccdLastFontPath = db.fontPath
         end
 
         local remaining = nil
@@ -175,17 +196,17 @@ local function InjectColor(cd)
         -- flag can apparently be set slightly outside what that reports), so
         -- the read itself stays pcall-wrapped no matter what — never crash,
         -- just fall back to Normal color if it turns out to be restricted.
-        if not InCombatLockdown() then
+        if not inCombat then
             local ok, r = pcall(function()
                 return ParseRemainingSeconds(nativeTxt:GetText())
             end)
             if not ok then r = nil end
             if not r then
-                trackingReal = false
+                nativeTxt._ccdTrackingReal = false
             elseif r > 1.6 then
-                trackingReal = true
+                nativeTxt._ccdTrackingReal = true
             end
-            if trackingReal then remaining = r end
+            if nativeTxt._ccdTrackingReal then remaining = r end
         end
 
         if remaining then
@@ -199,9 +220,8 @@ local function InjectColor(cd)
         else
             nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
         end
-    end)
-end
-ColorCD.InjectColor = InjectColor  -- exposed so Options.lua can drive the preview icon
+    end
+end)
 
 -- ── Standard Blizzard action bar button list ──────────────────────────────────
 local BLIZZARD_BARS = {
@@ -219,7 +239,11 @@ local BLIZZARD_BARS = {
 }
 
 -- ── Full bar scan: Blizzard + third-party addons ──────────────────────────────
-local function ScanAndInject()
+-- fullScan gates the generic EnumerateFrames walk below (see its own comment)
+-- — pass true for login/world-entry/combat-exit, false for high-frequency
+-- events like UPDATE_BONUS_ACTIONBAR where the named-bar passes already give
+-- full coverage cheaply.
+local function ScanAndInject(fullScan)
     -- Standard Blizzard bars
     for _, bar in ipairs(BLIZZARD_BARS) do
         local prefix, count = bar[1], bar[2]
@@ -261,7 +285,13 @@ local function ScanAndInject()
     -- Catches TukUI, Neuron, and any other bar addon not covered above.
     -- GetAttribute on protected frames causes taint in combat — skip the walk
     -- entirely if we're locked down; the named-bar pass above is combat-safe.
-    if not InCombatLockdown() then
+    -- Also skipped outright when fullScan is false: this is an unbounded
+    -- traversal of up to 5000 frames with a pcall'd GetAttribute on each, and
+    -- UPDATE_BONUS_ACTIONBAR (vehicle mounts, Druid form-shifting, etc.) can
+    -- fire repeatedly in quick succession — the override/vehicle-bar pass
+    -- above already covers what that event needs without paying for a full
+    -- UI-wide walk every single time it fires.
+    if fullScan and not InCombatLockdown() then
         local frame = EnumerateFrames()
         local n = 0
         while frame and n < 5000 do
@@ -285,7 +315,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_ENABLED" then
         -- Re-apply show state and run any generic walk skipped during combat.
         ColorCD.ApplyShowNumbers()
-        ScanAndInject()
+        ScanAndInject(true)
         return
     end
 
@@ -293,15 +323,19 @@ eventFrame:SetScript("OnEvent", function(_, event)
         DB()  -- populate defaults now that SavedVariables are available
     end
 
-    -- Scan on login, world entry, and bonus bar changes (vehicle mounting etc.)
-    ScanAndInject()
+    -- Scan on login, world entry, and bonus bar changes (vehicle mounting etc.).
+    -- UPDATE_BONUS_ACTIONBAR can fire repeatedly in quick succession (Druid
+    -- form-shifting, vehicle mounts) — only give login/world-entry the
+    -- expensive full generic-frame walk; that event gets the cheap named-bar
+    -- passes only (see ScanAndInject's fullScan comment).
+    ScanAndInject(event ~= "UPDATE_BONUS_ACTIONBAR")
 
     -- Delayed rescan: bar addons like ElvUI and Bartender4 finish building their
     -- buttons a frame or two after PLAYER_LOGIN / PLAYER_ENTERING_WORLD.
     -- If the timer fires in combat, fall back to PLAYER_REGEN_ENABLED for the
     -- generic walk (named-bar pass in ScanAndInject is always combat-safe).
     if C_Timer then
-        C_Timer.After(2, ScanAndInject)
+        C_Timer.After(2, function() ScanAndInject(true) end)
     end
 
     if event == "PLAYER_LOGIN" then
