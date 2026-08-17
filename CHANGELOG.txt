@@ -1,3 +1,15 @@
+## v2.3 - Scan Throttle
+- Confirmed via live testing that Blizzard's anti-cheat still blocks reading
+  precise cooldown remaining-time during combat as of patch 12.1 — urgency
+  colors (orange/red) remain outside-combat only for now; this isn't
+  something the addon can work around.
+- Fixed a residual freeze source in arenas/BGs: the full UI scan that runs
+  whenever you leave combat (to catch bars built while locked down) could
+  re-run back-to-back during short in-and-out-of-combat sequences. It's now
+  throttled to once every 3 seconds — new third-party bars don't appear that
+  fast, and the always-safe named-bar passes (Blizzard/Bartender4/ElvUI/
+  Dominos) still run every time regardless.
+
 ## v2.2.1 - Interface Update
 - Updated the client interface version for patch 12.1 — no code changes.
 

@@ -190,12 +190,16 @@ ticker:SetScript("OnUpdate", function(_, dt)
         -- (Midnight's anti-automation protection) — reading it throws
         -- regardless of which API is used, and once shortened by a proc
         -- mid-fight there's no reliable way to track it from outside anyway.
-        -- Rather than guess, urgency simply doesn't apply during combat; the
-        -- number just shows your Normal color for the whole fight. The
-        -- InCombatLockdown() check alone isn't a hard guarantee (the secret
-        -- flag can apparently be set slightly outside what that reports), so
-        -- the read itself stays pcall-wrapped no matter what — never crash,
-        -- just fall back to Normal color if it turns out to be restricted.
+        -- Confirmed still in effect as of patch 12.1 via live testing (an
+        -- unconditional per-tick pcall attempt in combat was tried and
+        -- always failed — not worth paying for on every overlay every tick
+        -- for a read that never succeeds). Rather than guess, urgency simply
+        -- doesn't apply during combat; the number just shows your Normal
+        -- color for the whole fight. The InCombatLockdown() check alone
+        -- isn't a hard guarantee (the secret flag can apparently be set
+        -- slightly outside what that reports), so the read itself stays
+        -- pcall-wrapped no matter what — never crash, just fall back to
+        -- Normal color if it turns out to be restricted.
         if not inCombat then
             local ok, r = pcall(function()
                 return ParseRemainingSeconds(nativeTxt:GetText())
@@ -243,6 +247,7 @@ local BLIZZARD_BARS = {
 -- — pass true for login/world-entry/combat-exit, false for high-frequency
 -- events like UPDATE_BONUS_ACTIONBAR where the named-bar passes already give
 -- full coverage cheaply.
+local lastFullWalk = 0
 local function ScanAndInject(fullScan)
     -- Standard Blizzard bars
     for _, bar in ipairs(BLIZZARD_BARS) do
@@ -291,7 +296,14 @@ local function ScanAndInject(fullScan)
     -- fire repeatedly in quick succession — the override/vehicle-bar pass
     -- above already covers what that event needs without paying for a full
     -- UI-wide walk every single time it fires.
-    if fullScan and not InCombatLockdown() then
+    --
+    -- Throttled to at most once every 3s: PLAYER_REGEN_ENABLED also requests
+    -- fullScan, and short in-and-out-of-combat sequences (common in arenas/
+    -- BGs) would otherwise re-run this walk back-to-back for no reason — no
+    -- new third-party bar buttons appear that fast. Named-bar/BT4/ElvUI/
+    -- Dominos passes above are cheap and always run regardless of throttling.
+    if fullScan and not InCombatLockdown() and (GetTime() - lastFullWalk) >= 3 then
+        lastFullWalk = GetTime()
         local frame = EnumerateFrames()
         local n = 0
         while frame and n < 5000 do
