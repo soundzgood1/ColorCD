@@ -1,8 +1,12 @@
-## v2.3 - Scan Throttle
-- Confirmed via live testing that Blizzard's anti-cheat still blocks reading
-  precise cooldown remaining-time during combat as of patch 12.1 — urgency
-  colors (orange/red) remain outside-combat only for now; this isn't
-  something the addon can work around.
+## v2.3 - Removed Urgency Colors + Scan Throttle
+- Removed Warning/Critical urgency colors and their thresholds. Live testing
+  confirmed Blizzard's anti-cheat blocks the precise combat cooldown-timing
+  they depended on, so they only ever worked outside combat — not accessible
+  under the current WoW UI restrictions, and not useful enough to keep the
+  added settings-UI complexity around. ColorCD now just applies one color to
+  your cooldown numbers, always.
+- Existing Warning/Critical settings in your saved variables are simply
+  ignored now; no need to reset anything.
 - Fixed a residual freeze source in arenas/BGs: the full UI scan that runs
   whenever you leave combat (to catch bars built while locked down) could
   re-run back-to-back during short in-and-out-of-combat sequences. It's now

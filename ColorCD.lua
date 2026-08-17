@@ -24,16 +24,6 @@ local function DB()
     if db.colorR         == nil then db.colorR         = 1.0   end  -- default: yellow
     if db.colorG         == nil then db.colorG         = 1.0   end
     if db.colorB         == nil then db.colorB         = 0.0   end
-    if db.urg1R          == nil then db.urg1R          = 1.0   end  -- medium: orange
-    if db.urg1G          == nil then db.urg1G          = 0.50  end
-    if db.urg1B          == nil then db.urg1B          = 0.0   end
-    if db.urg2R          == nil then db.urg2R          = 1.0   end  -- critical: red
-    if db.urg2G          == nil then db.urg2G          = 0.15  end
-    if db.urg2B          == nil then db.urg2B          = 0.15  end
-    if db.urg1Enabled    == nil then db.urg1Enabled    = true  end
-    if db.urg2Enabled    == nil then db.urg2Enabled    = true  end
-    if db.urg1Threshold  == nil then db.urg1Threshold  = 5     end
-    if db.urg2Threshold  == nil then db.urg2Threshold  = 2     end
     if db.fontSize       == nil then db.fontSize       = 14    end
     if db.fontName       == nil then db.fontName       = "Default" end
     -- db.fontPath is intentionally left unset by default: nil means "keep
@@ -43,19 +33,6 @@ local function DB()
     return db
 end
 ColorCD.DB = DB
-
--- ── Parse Blizzard's own rendered countdown text ─────────────────────────────
--- Reading the displayed number (instead of reconstructing timing from
--- GetCooldownTimes/GetCooldownDisplayDuration) is immune to both the secret-
--- value taint AND to procs/talents that shorten a cooldown mid-flight —
--- Blizzard's own ticker already accounts for those, we just have to read it.
-local function ParseRemainingSeconds(text)
-    if not text or text == "" then return nil end
-    text = text:gsub(",", ".")  -- some locales render decimals with a comma
-    local min, sec = text:match("^(%d+):(%d+)$")
-    if min then return tonumber(min) * 60 + tonumber(sec) end
-    return tonumber(text)
-end
 
 -- ── Shared font application ──────────────────────────────────────────────────
 -- Used by UpdateAllColors, InjectColor's initial apply, and the shared
@@ -113,7 +90,7 @@ local function InjectColor(cd)
     -- Some frames (Bartender4/ElvUI buttons built late, pet/stance buttons that
     -- haven't had SetCooldown called yet) don't have this ready on first scan —
     -- leave _ccdInjected unset so a later rescan retries them instead of
-    -- permanently skipping color/urgency for that button.
+    -- permanently skipping this button.
     local nativeTxt = cd:GetCountdownFontString()
     if not nativeTxt then return end
 
@@ -138,10 +115,6 @@ local function InjectColor(cd)
     -- replaced a CreateFrame+OnUpdate per cooldown.
     nativeTxt._ccdLastSize     = db.fontSize or 0  -- tracks applied size/face to avoid redundant SetFont
     nativeTxt._ccdLastFontPath = db.fontPath
-    -- True once the current countdown text has been observed above the GCD's
-    -- ~1.5s ceiling, meaning it must be a real cooldown. Reset whenever the
-    -- text goes blank (finished/idle).
-    nativeTxt._ccdTrackingReal = false
 
     ColorCD.overlays[#ColorCD.overlays + 1] = nativeTxt
 end
@@ -151,11 +124,10 @@ ColorCD.InjectColor = InjectColor  -- exposed so Options.lua can drive the previ
 -- Previously each cooldown got its own CreateFrame + OnUpdate. With 100+
 -- buttons active at once (Bartender4/ElvUI/Dominos bars combined), that meant
 -- 100+ separate OnUpdate closures dispatched every rendered frame, each
--- re-checking InCombatLockdown() and calling DB() independently. One ticker
--- walking the shared overlays list does the same per-cooldown work — text
--- parsing, color math, font updates — for a single OnUpdate call instead,
--- and reads InCombatLockdown()/DB() once per tick rather than once per
--- overlay. Parented to UIParent (non-secure) so it still fires in combat.
+-- re-checking DB() independently. One ticker walking the shared overlays list
+-- continuously re-asserts color/font — needed because Blizzard's own cooldown
+-- widget periodically resets the countdown text back to its default color —
+-- for a single OnUpdate call instead of one per cooldown.
 local ticker        = CreateFrame("Frame", nil, UIParent)
 local tickerElapsed = 0
 ticker:SetScript("OnUpdate", function(_, dt)
@@ -172,58 +144,13 @@ ticker:SetScript("OnUpdate", function(_, dt)
     end
 
     local sz = db.fontSize or 0
-    -- See InjectColor's ticker comment for why this is read once here rather
-    -- than once per overlay: the secret-value/anti-automation behavior below
-    -- doesn't vary per cooldown, only per combat state.
-    local inCombat = InCombatLockdown()
-
     for _, nativeTxt in ipairs(ColorCD.overlays) do
         if sz ~= nativeTxt._ccdLastSize or db.fontPath ~= nativeTxt._ccdLastFontPath then
             ApplyFont(nativeTxt, db, sz)
             nativeTxt._ccdLastSize     = sz
             nativeTxt._ccdLastFontPath = db.fontPath
         end
-
-        local remaining = nil
-
-        -- Cooldown timing becomes a Blizzard "secret" value in combat
-        -- (Midnight's anti-automation protection) — reading it throws
-        -- regardless of which API is used, and once shortened by a proc
-        -- mid-fight there's no reliable way to track it from outside anyway.
-        -- Confirmed still in effect as of patch 12.1 via live testing (an
-        -- unconditional per-tick pcall attempt in combat was tried and
-        -- always failed — not worth paying for on every overlay every tick
-        -- for a read that never succeeds). Rather than guess, urgency simply
-        -- doesn't apply during combat; the number just shows your Normal
-        -- color for the whole fight. The InCombatLockdown() check alone
-        -- isn't a hard guarantee (the secret flag can apparently be set
-        -- slightly outside what that reports), so the read itself stays
-        -- pcall-wrapped no matter what — never crash, just fall back to
-        -- Normal color if it turns out to be restricted.
-        if not inCombat then
-            local ok, r = pcall(function()
-                return ParseRemainingSeconds(nativeTxt:GetText())
-            end)
-            if not ok then r = nil end
-            if not r then
-                nativeTxt._ccdTrackingReal = false
-            elseif r > 1.6 then
-                nativeTxt._ccdTrackingReal = true
-            end
-            if nativeTxt._ccdTrackingReal then remaining = r end
-        end
-
-        if remaining then
-            if db.urg2Enabled and remaining <= (db.urg2Threshold or 2) then
-                nativeTxt:SetTextColor(db.urg2R, db.urg2G, db.urg2B, 1)
-            elseif db.urg1Enabled and remaining <= (db.urg1Threshold or 5) then
-                nativeTxt:SetTextColor(db.urg1R, db.urg1G, db.urg1B, 1)
-            else
-                nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
-            end
-        else
-            nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
-        end
+        nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
     end
 end)
 

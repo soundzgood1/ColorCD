@@ -85,16 +85,15 @@ end
 
 -- ── Window-level locals (referenced by OnShow) ────────────────────────────────
 local win
-local swatchTex, swatchMedTex, swatchCritTex
+local swatchTex
 local cbEnable, cbMinimap
-local cbUrg1, cbUrg2, ebUrg1, ebUrg2
 
 -- ── Main standalone window ────────────────────────────────────────────────────
 local function BuildWindow()
     local M = 20  -- left content margin
 
     win = CreateFrame("Frame", "ColorCDMainFrame", UIParent)
-    win:SetSize(390, 650)
+    win:SetSize(390, 520)
     win:SetPoint("CENTER")
     win:SetFrameStrata("DIALOG")
     win:SetToplevel(true)
@@ -172,7 +171,7 @@ local function BuildWindow()
     colorSubtitle:SetPoint("TOPLEFT", win, "TOPLEFT", M, -138)
     colorSubtitle:SetWidth(350)
     colorSubtitle:SetJustifyH("LEFT")
-    colorSubtitle:SetText("Numbers show your Normal color, then switch to Warning and Critical as a cooldown runs out.")
+    colorSubtitle:SetText("Pick the color your cooldown numbers should always show.")
 
     -- ── Live preview icon — a real action-button-style Cooldown widget driven
     -- through ColorCD's own InjectColor/ticker, so what you see here is exactly
@@ -198,9 +197,7 @@ local function BuildWindow()
     local testBtn = MakeBtn(win, "Test Cooldown", 110, 26)
     testBtn:SetPoint("LEFT", previewBtn, "RIGHT", 14, -12)
     testBtn:SetScript("OnClick", function()
-        local db = ColorCD.DB()
-        local dur = math.max(db.urg1Threshold or 5, db.urg2Threshold or 2) + 6
-        previewCooldown:SetCooldown(GetTime(), dur)
+        previewCooldown:SetCooldown(GetTime(), 10)
     end)
 
     -- Anchored to the window, not to testBtn, and width-capped so it can never
@@ -211,135 +208,52 @@ local function BuildWindow()
     previewHint:SetJustifyH("LEFT")
     previewHint:SetText("Just a preview — your action bars aren't affected.")
 
-    -- Shared column layout — Normal / Warning / Critical line up on one grid.
-    local COL_CHECK  = M
-    local COL_LABEL  = M + 26
-    local COL_INPUT  = M + 102
-    local COL_SUFFIX = COL_INPUT + 40
-    local COL_SWATCH = M + 210
+    -- Color swatch
+    local colorSwatch = CreateFrame("Button", nil, win)
+    colorSwatch:SetSize(36, 22)
+    colorSwatch:SetPoint("TOPLEFT", win, "TOPLEFT", M, -266)
+    swatchTex = colorSwatch:CreateTexture(nil, "BACKGROUND")
+    swatchTex:SetAllPoints()
+    ApplyBorder(colorSwatch)
 
-    local function MakeColorRow(yTop, rowLabel, tooltipText, enabledKey, thresholdKey, rKey, gKey, bKey, swatchTexRef, defaultThresh, isBase)
-        if enabledKey then
-            local cb = CreateFrame("CheckButton", nil, win)
-            cb:SetSize(20, 20)
-            cb:SetPoint("TOPLEFT", win, "TOPLEFT", COL_CHECK, yTop)
-            cb:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-            cb:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-            cb:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight", "ADD")
-            cb:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
-            cb:SetScript("OnClick", function(self)
-                ColorCD_DB[enabledKey] = self:GetChecked() and true or false
-            end)
-            if enabledKey == "urg1Enabled" then cbUrg1 = cb else cbUrg2 = cb end
-        end
+    local colorLbl = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    colorLbl:SetPoint("LEFT", colorSwatch, "RIGHT", 10, 0)
+    colorLbl:SetText("Color")
 
-        local lbl = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lbl:SetPoint("LEFT", win, "TOPLEFT", COL_LABEL, yTop - 10)
-        lbl:SetText(rowLabel)
-
-        if thresholdKey then
-            local eb = CreateFrame("EditBox", nil, win)
-            eb:SetSize(36, 20)
-            eb:SetPoint("TOPLEFT", win, "TOPLEFT", COL_INPUT, yTop)
-            eb:SetAutoFocus(false)
-            eb:SetNumeric(true)
-            eb:SetMaxLetters(3)
-            eb:SetFontObject("GameFontHighlightSmall")
-            eb:SetTextInsets(4, 4, 2, 2)
-            local ebbg = eb:CreateTexture(nil, "BACKGROUND")
-            ebbg:SetAllPoints(); ebbg:SetColorTexture(0.08, 0.08, 0.11, 1)
-            ApplyBorder(eb)
-
-            -- Commits on every valid keystroke — the value is live the moment
-            -- you type it, nothing further to confirm or reload.
-            -- Critical fires before Warning in the ticker, so Critical's
-            -- seconds can never be allowed to exceed Warning's — otherwise
-            -- Warning becomes unreachable (Critical always wins first).
-            -- Enforce that by dragging the other field along when crossed.
-            local function Commit()
-                local val = eb:GetNumber()
-                if val >= 1 then
-                    ColorCD_DB[thresholdKey] = val
-                    if thresholdKey == "urg1Threshold" and ColorCD_DB.urg2Threshold
-                       and ColorCD_DB.urg2Threshold > val then
-                        ColorCD_DB.urg2Threshold = val
-                        if ebUrg2 then ebUrg2:SetText(tostring(val)) end
-                    elseif thresholdKey == "urg2Threshold" and ColorCD_DB.urg1Threshold
-                       and ColorCD_DB.urg1Threshold < val then
-                        ColorCD_DB.urg1Threshold = val
-                        if ebUrg1 then ebUrg1:SetText(tostring(val)) end
-                    end
-                else
-                    eb:SetText(tostring(ColorCD_DB[thresholdKey] or defaultThresh))
-                end
-            end
-            eb:SetScript("OnTextChanged", function(self, isUserInput)
-                if isUserInput then Commit() end
-            end)
-            eb:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-            eb:SetScript("OnEscapePressed", function(self)
-                self:SetText(tostring(ColorCD_DB[thresholdKey] or defaultThresh))
-                self:ClearFocus()
-            end)
-            eb:SetScript("OnEditFocusLost", Commit)
-
-            local suffix = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            suffix:SetPoint("TOPLEFT", win, "TOPLEFT", COL_SUFFIX, yTop - 3)
-            suffix:SetText("|cff888888s left|r")
-
-            if thresholdKey == "urg1Threshold" then ebUrg1 = eb else ebUrg2 = eb end
-        end
-
-        -- Color swatch
-        local sw = CreateFrame("Button", nil, win)
-        sw:SetSize(36, 22)
-        sw:SetPoint("TOPLEFT", win, "TOPLEFT", COL_SWATCH, yTop - 1)
-        local swTex = sw:CreateTexture(nil, "BACKGROUND")
-        swTex:SetAllPoints()
-        ApplyBorder(sw)
-        swatchTexRef[1] = swTex
-
-        local function OpenPicker()
-            if not ColorPickerFrame or not ColorPickerFrame.SetupColorPickerAndShow then return end
-            local db = ColorCD.DB()
-            local pR, pG, pB = db[rKey], db[gKey], db[bKey]
-            ColorPickerFrame:SetupColorPickerAndShow({
-                swatchFunc = function()
-                    local r, g, b = ColorPickerFrame:GetColorRGB()
-                    ColorCD_DB[rKey], ColorCD_DB[gKey], ColorCD_DB[bKey] = r, g, b
-                    swTex:SetColorTexture(r, g, b, 1)
-                    if isBase then ColorCD.UpdateAllColors() end
-                end,
-                cancelFunc = function(prev)
-                    local r = (prev and prev.r) or pR
-                    local g = (prev and prev.g) or pG
-                    local b = (prev and prev.b) or pB
-                    ColorCD_DB[rKey], ColorCD_DB[gKey], ColorCD_DB[bKey] = r, g, b
-                    swTex:SetColorTexture(r, g, b, 1)
-                    if isBase then ColorCD.UpdateAllColors() end
-                end,
-                hasOpacity = false,
-                r = db[rKey], g = db[gKey], b = db[bKey],
-            })
-        end
-        sw:SetScript("OnClick", OpenPicker)
-        sw:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(rowLabel, 1, 1, 1)
-            GameTooltip:AddLine(tooltipText, 0.8, 0.8, 0.8, true)
-            GameTooltip:Show()
-        end)
-        sw:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    local function OpenColorPicker()
+        if not ColorPickerFrame or not ColorPickerFrame.SetupColorPickerAndShow then return end
+        local db = ColorCD.DB()
+        local pR, pG, pB = db.colorR, db.colorG, db.colorB
+        ColorPickerFrame:SetupColorPickerAndShow({
+            swatchFunc = function()
+                local r, g, b = ColorPickerFrame:GetColorRGB()
+                ColorCD_DB.colorR, ColorCD_DB.colorG, ColorCD_DB.colorB = r, g, b
+                swatchTex:SetColorTexture(r, g, b, 1)
+                ColorCD.UpdateAllColors()
+            end,
+            cancelFunc = function(prev)
+                local r = (prev and prev.r) or pR
+                local g = (prev and prev.g) or pG
+                local b = (prev and prev.b) or pB
+                ColorCD_DB.colorR, ColorCD_DB.colorG, ColorCD_DB.colorB = r, g, b
+                swatchTex:SetColorTexture(r, g, b, 1)
+                ColorCD.UpdateAllColors()
+            end,
+            hasOpacity = false,
+            r = db.colorR, g = db.colorG, b = db.colorB,
+        })
     end
+    colorSwatch:SetScript("OnClick", OpenColorPicker)
+    colorSwatch:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Color", 1, 1, 1)
+        GameTooltip:AddLine("The color used for your cooldown numbers.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    colorSwatch:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    local baseRef, medRef, critRef = {}, {}, {}
-    MakeColorRow(-266, "Normal",
-        "The default color, shown whenever a cooldown isn't within the Warning or Critical range below.",
-        nil, nil, "colorR", "colorG", "colorB", baseRef, nil, true)
-    swatchTex = baseRef[1]
-
-    -- Size and Font live here, right under Normal, since they're general
-    -- number-appearance settings that apply regardless of color/urgency.
+    -- Size and Font live here, right under Color, since they're the other
+    -- general number-appearance settings.
     local sizeLbl = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     sizeLbl:SetPoint("TOPLEFT", win, "TOPLEFT", M, -294)
     sizeLbl:SetText("|cff888888Number Size|r")
@@ -522,50 +436,22 @@ local function BuildWindow()
     end)
     win:HookScript("OnHide", function() fontDrop:Hide() end)
 
-    -- Normal (plus Size/Font above) always applies. Warning/Critical are a
-    -- separate case, given their own mini-header (same style as every other
-    -- section) since a recent WoW anti-automation system blocks the precise
-    -- cooldown timing they need while you're in combat — the one time
-    -- they'd otherwise matter most.
-    SectionLabel(win, "URGENCY COLORS", -350)
-
-    local combatNote = win:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    combatNote:SetPoint("TOPLEFT", win, "TOPLEFT", M, -372)
-    combatNote:SetWidth(350)
-    combatNote:SetJustifyH("LEFT")
-    combatNote:SetText("Only applies outside combat — a new WoW anti-cheat system blocks precise cooldown timing during fights.")
-
-    MakeColorRow(-400, "Warning",
-        "Turns the number this color once the cooldown has this many seconds or fewer left.",
-        "urg1Enabled", "urg1Threshold", "urg1R", "urg1G", "urg1B", medRef, 5)
-    MakeColorRow(-426, "Critical",
-        "Turns the number this color once the cooldown has this many seconds or fewer left. Takes priority over Warning when both apply.",
-        "urg2Enabled", "urg2Threshold", "urg2R", "urg2G", "urg2B", critRef, 2)
-    swatchMedTex  = medRef[1]
-    swatchCritTex = critRef[1]
-
-    local hint = win:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", win, "TOPLEFT", M, -452)
-    hint:SetWidth(350)
-    hint:SetJustifyH("LEFT")
-    hint:SetText("Critical can't be set higher than Warning — raising one adjusts the other, since Critical always triggers closer to zero.")
-
-    Div(win, -478)
+    Div(win, -352)
 
     -- ── MINIMAP ───────────────────────────────────────────────────────────────
-    SectionLabel(win, "MINIMAP", -488)
+    SectionLabel(win, "MINIMAP", -362)
 
-    cbMinimap = MakeCheckbox(win, "Show minimap button", -514)
+    cbMinimap = MakeCheckbox(win, "Show minimap button", -388)
     cbMinimap:SetScript("OnClick", function(self)
         local show = self:GetChecked() and true or false
         ColorCD_DB.minimapHide = not show
         ColorCD.MinimapButton:SetVisible(show)
     end)
 
-    Div(win, -550)
+    Div(win, -420)
 
     -- ── ADVANCED ──────────────────────────────────────────────────────────────
-    SectionLabel(win, "ADVANCED", -560)
+    SectionLabel(win, "ADVANCED", -430)
 
     StaticPopupDialogs["COLORCD_RESET_CONFIRM"] = {
         text         = "Reset all ColorCD settings to defaults?\nThis will reload the UI.",
@@ -578,7 +464,7 @@ local function BuildWindow()
     }
 
     local restoreBtn = MakeBtn(win, "Restore All Defaults", 160, 26)
-    restoreBtn:SetPoint("TOPLEFT", win, "TOPLEFT", M, -588)
+    restoreBtn:SetPoint("TOPLEFT", win, "TOPLEFT", M, -458)
     restoreBtn:SetScript("OnClick", function()
         StaticPopup_Show("COLORCD_RESET_CONFIRM")
     end)
@@ -592,19 +478,13 @@ local function BuildWindow()
     win:SetScript("OnShow", function()
         local db = ColorCD.DB()
         cbEnable:SetChecked(db.enabled)
-        cbUrg1:SetChecked(db.urg1Enabled ~= false)
-        cbUrg2:SetChecked(db.urg2Enabled ~= false)
-        ebUrg1:SetText(tostring(db.urg1Threshold or 5))
-        ebUrg2:SetText(tostring(db.urg2Threshold or 2))
         cbMinimap:SetChecked(not db.minimapHide)
         local fsz = db.fontSize or 0
         fontSliderLock = true
         fontSlider:SetValue(fsz > 0 and fsz or 14)
         fontSliderLock = false
         sliderVal:SetText(fsz > 0 and fsz or "auto")
-        swatchTex:SetColorTexture(db.colorR,  db.colorG,  db.colorB,  1)
-        swatchMedTex:SetColorTexture(db.urg1R, db.urg1G, db.urg1B, 1)
-        swatchCritTex:SetColorTexture(db.urg2R, db.urg2G, db.urg2B, 1)
+        swatchTex:SetColorTexture(db.colorR, db.colorG, db.colorB, 1)
         fbLabel:SetText(db.fontName or "Default")
         for _, item in ipairs(fontItems) do item.sel:SetShown(item.name == (db.fontName or "Default")) end
     end)
