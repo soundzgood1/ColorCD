@@ -121,36 +121,63 @@ end
 ColorCD.InjectColor = InjectColor  -- exposed so Options.lua can drive the preview icon
 
 -- ── Single shared ticker for every injected cooldown ─────────────────────────
--- Previously each cooldown got its own CreateFrame + OnUpdate. With 100+
--- buttons active at once (Bartender4/ElvUI/Dominos bars combined), that meant
--- 100+ separate OnUpdate closures dispatched every rendered frame, each
--- re-checking DB() independently. One ticker walking the shared overlays list
--- continuously re-asserts color/font — needed because Blizzard's own cooldown
--- widget periodically resets the countdown text back to its default color —
--- for a single OnUpdate call instead of one per cooldown.
+-- Blizzard's cooldown widget periodically resets the countdown text back to its
+-- default colour, so the colour has to be re-asserted rather than set once.
+-- This used to be a CreateFrame+OnUpdate per cooldown; one shared ticker
+-- replaced 100+ dispatches per rendered frame with a single one.
+--
+-- The shared ticker still re-applied SetTextColor to every overlay on every
+-- tick, running or not: ~118 buttons on the default bars alone, ~100 times a
+-- second, permanently. Blizzard's profiler put ColorCD's steady cost at about
+-- 2ms per frame because of it. Two gates fix that without changing how quickly
+-- the colour is re-asserted:
+--
+--   1. Skip overlays that are not visible. A button with no cooldown running
+--      has nothing to colour, and that is the overwhelming majority of them.
+--   2. Only call SetTextColor when the colour actually differs. Re-setting the
+--      same colour still dirties the text for re-render.
+--
+-- Gate 1 rests on the countdown FontString being invisible while its cooldown
+-- is idle; gate 2 holds regardless, so a wrong assumption there costs the
+-- saving, not correctness.
 local ticker        = CreateFrame("Frame", nil, UIParent)
 local tickerElapsed = 0
+local TICK_INTERVAL = 0.01   -- ~100/s, shared across every overlay
 ticker:SetScript("OnUpdate", function(_, dt)
     tickerElapsed = tickerElapsed + dt
-    if tickerElapsed < 0.01 then return end  -- ~100/s cap, shared across every overlay
+    if tickerElapsed < TICK_INTERVAL then return end
     tickerElapsed = 0
 
+    local overlays = ColorCD.overlays
     local db = DB()
     if not db.enabled then
-        for _, nativeTxt in ipairs(ColorCD.overlays) do
-            nativeTxt:SetTextColor(1, 1, 1, 1)
+        for i = 1, #overlays do
+            local nativeTxt = overlays[i]
+            if nativeTxt:IsVisible() then
+                local r, g, b = nativeTxt:GetTextColor()
+                if r ~= 1 or g ~= 1 or b ~= 1 then
+                    nativeTxt:SetTextColor(1, 1, 1, 1)
+                end
+            end
         end
         return
     end
 
     local sz = db.fontSize or 0
-    for _, nativeTxt in ipairs(ColorCD.overlays) do
-        if sz ~= nativeTxt._ccdLastSize or db.fontPath ~= nativeTxt._ccdLastFontPath then
-            ApplyFont(nativeTxt, db, sz)
-            nativeTxt._ccdLastSize     = sz
-            nativeTxt._ccdLastFontPath = db.fontPath
+    local cr, cg, cb = db.colorR, db.colorG, db.colorB
+    for i = 1, #overlays do
+        local nativeTxt = overlays[i]
+        if nativeTxt:IsVisible() then
+            if sz ~= nativeTxt._ccdLastSize or db.fontPath ~= nativeTxt._ccdLastFontPath then
+                ApplyFont(nativeTxt, db, sz)
+                nativeTxt._ccdLastSize     = sz
+                nativeTxt._ccdLastFontPath = db.fontPath
+            end
+            local r, g, b = nativeTxt:GetTextColor()
+            if r ~= cr or g ~= cg or b ~= cb then
+                nativeTxt:SetTextColor(cr, cg, cb, 1)
+            end
         end
-        nativeTxt:SetTextColor(db.colorR, db.colorG, db.colorB, 1)
     end
 end)
 
