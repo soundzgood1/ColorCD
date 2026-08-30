@@ -182,6 +182,76 @@ local lastFullWalk = 0
 -- doesn't need to pay for another one. This is what previously turned every
 -- arena/BG combat-exit into a 5000-frame EnumerateFrames walk.
 local fullScanDone = false
+-- ── Generic frame walk (fallback discovery) ──────────────────────────────────
+-- Catches TukUI, Neuron, and any other bar addon the named passes above miss.
+--
+-- It is also the single most expensive thing this addon does, and Blizzard's
+-- own profiler (C_AddOnProfiler, read via StutterAlert) measured what that
+-- costs: 47 hitch frames averaging ~60ms with ColorCD accounting for ~61% of
+-- the frame, 45 of them in cities, and the dominant signature was "no event
+-- firing" -- i.e. the C_Timer.After(2, ...) rescan landing on a quiet frame and
+-- burning the whole traversal there in one go.
+--
+-- Three changes so it is not paid for speculatively:
+--   * NeedsGenericWalk() skips it when Blizzard's own bars are visible, since
+--     the named passes already cover every button in that case;
+--   * it runs in chunks across frames instead of all at once;
+--   * fullScanDone (above) already limits it to once per loading screen.
+local FRAMES_PER_CHUNK = 100
+local MAX_FRAMES       = 5000
+local CHUNK_DELAY      = 0.01   -- deliberately not 0: a zero-delay timer queued
+                                -- from inside a timer callback can be picked up
+                                -- by the same tick's processing pass, which
+                                -- collapses the walk back into a single frame.
+local walkInProgress = false
+
+local function ContinueWalk(frame, n)
+    -- Bail out if we entered combat mid-walk: GetAttribute on protected frames
+    -- taints in combat, which is why the walk is combat-gated to begin with.
+    if InCombatLockdown() then
+        walkInProgress = false
+        return
+    end
+    local processed = 0
+    while frame and n < MAX_FRAMES and processed < FRAMES_PER_CHUNK do
+        n = n + 1
+        processed = processed + 1
+        local ok, atype = pcall(frame.GetAttribute, frame, "type")
+        if ok and atype == "action" and frame.cooldown then
+            InjectColor(frame.cooldown)
+        end
+        frame = EnumerateFrames(frame)
+    end
+    if frame and n < MAX_FRAMES then
+        if C_Timer then
+            C_Timer.After(CHUNK_DELAY, function() ContinueWalk(frame, n) end)
+        else
+            ContinueWalk(frame, n)  -- no C_Timer: finish rather than stop short
+        end
+    else
+        walkInProgress = false
+    end
+end
+
+-- Blizzard's main bar being visible means the player is on the default bars,
+-- which the named pass covers button for button. Bar addons that replace them
+-- hide these frames.
+local function NeedsGenericWalk()
+    local ab1 = _G.ActionButton1
+    if ab1 and ab1:IsShown() then return false end
+    return true
+end
+
+local function StartGenericWalk()
+    if walkInProgress or fullScanDone or InCombatLockdown() then return end
+    if not EnumerateFrames or not NeedsGenericWalk() then return end
+    if (GetTime() - lastFullWalk) < 3 then return end
+    lastFullWalk   = GetTime()
+    fullScanDone   = true
+    walkInProgress = true
+    ContinueWalk(EnumerateFrames(), 0)
+end
+
 local function ScanAndInject(fullScan)
     -- Standard Blizzard bars
     for _, bar in ipairs(BLIZZARD_BARS) do
@@ -219,36 +289,10 @@ local function ScanAndInject(fullScan)
             if btn and btn.cooldown then InjectColor(btn.cooldown) end
         end
     end
-
-    -- Generic: walk all frames and look for action buttons with cooldowns.
-    -- Catches TukUI, Neuron, and any other bar addon not covered above.
-    -- GetAttribute on protected frames causes taint in combat — skip the walk
-    -- entirely if we're locked down; the named-bar pass above is combat-safe.
-    -- Also skipped outright when fullScan is false: this is an unbounded
-    -- traversal of up to 5000 frames with a pcall'd GetAttribute on each, and
-    -- UPDATE_BONUS_ACTIONBAR (vehicle mounts, Druid form-shifting, etc.) can
-    -- fire repeatedly in quick succession — the override/vehicle-bar pass
-    -- above already covers what that event needs without paying for a full
-    -- UI-wide walk every single time it fires.
-    --
-    -- Skipped once fullScanDone is set (see its declaration above), and also
-    -- throttled to at most once every 3s as a belt-and-suspenders guard.
-    -- Named-bar/BT4/ElvUI/Dominos passes above are cheap and always run
-    -- regardless.
-    if fullScan and not fullScanDone and not InCombatLockdown() and (GetTime() - lastFullWalk) >= 3 then
-        lastFullWalk = GetTime()
-        fullScanDone = true
-        local frame = EnumerateFrames()
-        local n = 0
-        while frame and n < 5000 do
-            n = n + 1
-            local ok, atype = pcall(frame.GetAttribute, frame, "type")
-            if ok and atype == "action" and frame.cooldown then
-                InjectColor(frame.cooldown)
-            end
-            frame = EnumerateFrames(frame)
-        end
-    end
+    -- Fallback discovery for bar addons not named above.  Skipped entirely on
+    -- Blizzard's own bars, at most once per loading screen, and chunked across
+    -- frames when it does run -- see the StartGenericWalk block above.
+    if fullScan then StartGenericWalk() end
 end
 
 -- ── Initialisation ────────────────────────────────────────────────────────────
