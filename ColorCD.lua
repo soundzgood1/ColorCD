@@ -175,6 +175,13 @@ local BLIZZARD_BARS = {
 -- events like UPDATE_BONUS_ACTIONBAR where the named-bar passes already give
 -- full coverage cheaply.
 local lastFullWalk = 0
+-- True once the expensive walk has succeeded since the last loading screen.
+-- New bar-addon frames only ever appear right after a loading screen (zone
+-- change, relog, UI reload) — never mid-session just from leaving combat —
+-- so once a walk has completed for the current world, PLAYER_REGEN_ENABLED
+-- doesn't need to pay for another one. This is what previously turned every
+-- arena/BG combat-exit into a 5000-frame EnumerateFrames walk.
+local fullScanDone = false
 local function ScanAndInject(fullScan)
     -- Standard Blizzard bars
     for _, bar in ipairs(BLIZZARD_BARS) do
@@ -224,13 +231,13 @@ local function ScanAndInject(fullScan)
     -- above already covers what that event needs without paying for a full
     -- UI-wide walk every single time it fires.
     --
-    -- Throttled to at most once every 3s: PLAYER_REGEN_ENABLED also requests
-    -- fullScan, and short in-and-out-of-combat sequences (common in arenas/
-    -- BGs) would otherwise re-run this walk back-to-back for no reason — no
-    -- new third-party bar buttons appear that fast. Named-bar/BT4/ElvUI/
-    -- Dominos passes above are cheap and always run regardless of throttling.
-    if fullScan and not InCombatLockdown() and (GetTime() - lastFullWalk) >= 3 then
+    -- Skipped once fullScanDone is set (see its declaration above), and also
+    -- throttled to at most once every 3s as a belt-and-suspenders guard.
+    -- Named-bar/BT4/ElvUI/Dominos passes above are cheap and always run
+    -- regardless.
+    if fullScan and not fullScanDone and not InCombatLockdown() and (GetTime() - lastFullWalk) >= 3 then
         lastFullWalk = GetTime()
+        fullScanDone = true
         local frame = EnumerateFrames()
         local n = 0
         while frame and n < 5000 do
@@ -260,6 +267,11 @@ eventFrame:SetScript("OnEvent", function(_, event)
 
     if event == "PLAYER_LOGIN" then
         DB()  -- populate defaults now that SavedVariables are available
+    end
+
+    if event == "PLAYER_ENTERING_WORLD" then
+        -- New loading screen: bar addons may have rebuilt their frames.
+        fullScanDone = false
     end
 
     -- Scan on login, world entry, and bonus bar changes (vehicle mounting etc.).
