@@ -77,7 +77,7 @@ end
 -- ── Ensure countdown numbers are visible (only safe to call outside combat) ───
 function ColorCD.ApplyShowNumbers()
     for _, cd in ipairs(ColorCD.cooldowns) do
-        pcall(function() cd:SetHideCountdownNumbers(false) end)
+        pcall(cd.SetHideCountdownNumbers, cd, false)
     end
 end
 
@@ -101,7 +101,7 @@ local function InjectColor(cd)
     -- SetHideCountdownNumbers is AllowedWhenUntainted only — skip during combat;
     -- the PLAYER_REGEN_ENABLED handler will catch any frames missed here.
     if not InCombatLockdown() then
-        pcall(function() cd:SetHideCountdownNumbers(false) end)
+        pcall(cd.SetHideCountdownNumbers, cd, false)
     end
 
     local db = DB()
