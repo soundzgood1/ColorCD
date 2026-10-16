@@ -1,6 +1,6 @@
-## Interface: 120007, 120100
+## Interface: 120105
 ## Title: |cffbb77ffColorCD|r
-## Version: 2.3
+## Version: 2.4
 ## Author: Soundz
 ## Notes: Custom-colored action bar cooldown numbers with minimap button.
 ## SavedVariables: ColorCD_DB

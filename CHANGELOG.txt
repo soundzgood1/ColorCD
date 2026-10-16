@@ -1,3 +1,15 @@
+## v2.4 - Patch 12.1.5 + Performance Fixes
+- Updated the client interface version for patch 12.1.5. Since the October 14
+  patch the game flagged ColorCD as out of date and didn't load it.
+- Fixed stutters in cities and after loading screens when using a third-party
+  action bar addon: the full UI scan now runs in small chunks instead of one
+  long freeze, and is skipped entirely when you use Blizzard's default bars.
+- Fixed repeated lag in arenas/BGs: that scan no longer re-runs on every
+  combat exit — once per loading screen is enough, since new bars only appear
+  after one.
+- Lower constant CPU cost: cooldowns that aren't running are no longer
+  re-colored about 100 times a second.
+
 ## v2.3 - Removed Urgency Colors + Scan Throttle
 - Removed Warning/Critical urgency colors and their thresholds. Live testing
   confirmed Blizzard's anti-cheat blocks the precise combat cooldown-timing
